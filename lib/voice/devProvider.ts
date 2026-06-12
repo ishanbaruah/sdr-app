@@ -9,13 +9,13 @@ export function createDevVoiceProvider(): VoiceProvider {
   let isRunning = false;
   let pendingStart = false;
 
-  // Web Audio API for playback — on iOS, AudioContext uses AVAudioSessionCategoryPlayback
-  // (speaker) even when SpeechRecognition has the mic in "voice" mode.
   let audioCtx: AudioContext | null = null;
   let currentSource: AudioBufferSourceNode | null = null;
   let currentGain: GainNode | null = null;
+  let queueAborted = false;
 
-  const SILENCE_MS = 1400;
+  // After rep stops talking, wait this long before firing onFinal.
+  const SILENCE_MS = 900;
 
   function spawnRecognition(
     onFinal: (text: string) => void,
@@ -62,6 +62,56 @@ export function createDevVoiceProvider(): VoiceProvider {
     return r;
   }
 
+  // Core Web Audio playback for one ArrayBuffer. Resolves when audio finishes.
+  async function playBuf(arrayBuffer: ArrayBuffer): Promise<void> {
+    if (!audioCtx) return;
+    return new Promise(async (resolve) => {
+      try {
+        await audioCtx!.resume();
+        const audioBuffer = await audioCtx!.decodeAudioData(arrayBuffer);
+        const source = audioCtx!.createBufferSource();
+        source.buffer = audioBuffer;
+
+        const gain = audioCtx!.createGain();
+        source.connect(gain);
+        gain.connect(audioCtx!.destination);
+        currentSource = source;
+        currentGain = gain;
+
+        // Smooth fade-out in the last 80ms to prevent end-of-buffer click/pop
+        const duration = audioBuffer.duration;
+        const FADE = Math.min(0.08, duration * 0.1);
+        const now = audioCtx!.currentTime;
+        gain.gain.setValueAtTime(1, now + Math.max(0, duration - FADE));
+        gain.gain.linearRampToValueAtTime(0.0001, now + duration);
+
+        let settled = false;
+        const timeoutId = setTimeout(() => {
+          if (settled) return;
+          settled = true;
+          try { source.stop(); } catch (_) {}
+          if (currentSource === source) currentSource = null;
+          if (currentGain === gain) currentGain = null;
+          resolve();
+        }, 20000);
+
+        source.onended = () => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timeoutId);
+          if (currentSource === source) currentSource = null;
+          if (currentGain === gain) currentGain = null;
+          resolve();
+        };
+
+        source.start(0);
+      } catch (e) {
+        console.warn("Web Audio playback failed:", e);
+        resolve();
+      }
+    });
+  }
+
   return {
     transcribe(onFinal, onInterim) {
       SpeechRecognitionCtor =
@@ -71,9 +121,6 @@ export function createDevVoiceProvider(): VoiceProvider {
 
       recognition = spawnRecognition(onFinal, onInterim);
 
-      // Create + resume AudioContext synchronously inside the user-gesture handler.
-      // This unlocks Web Audio on iOS — all subsequent source.start() calls will
-      // play through the speaker regardless of SpeechRecognition audio session state.
       if (!audioCtx) audioCtx = new AudioContext();
       audioCtx.resume().catch(() => {});
 
@@ -102,22 +149,19 @@ export function createDevVoiceProvider(): VoiceProvider {
     },
 
     async speak(rawText: string): Promise<void> {
-      // Strip stage directions Claude occasionally generates despite prompt instructions:
-      // *sighs*, [beat], (pause), (laughs), etc.
       const text = rawText
-        .replace(/\*[^*\n]+\*/g, " ")          // *action*
-        .replace(/\[[^\]\n]+\]/g, " ")          // [action]
+        .replace(/\*[^*\n]+\*/g, " ")
+        .replace(/\[[^\]\n]+\]/g, " ")
         .replace(/\((?:pause|laugh|chuckle|sigh|smile|nod|beat|breath|clears?\s+(?:his|her|their|my)?\s*throat)[^)]*\)/gi, " ")
         .replace(/\s{2,}/g, " ")
         .trim();
 
-      // Cancel any in-progress audio
       if (currentSource) {
         try { currentSource.stop(); } catch (_) {}
         currentSource = null;
+        currentGain = null;
       }
 
-      // Fetch ElevenLabs audio as raw bytes
       let arrayBuffer: ArrayBuffer | null = null;
       try {
         const res = await fetch("/api/tts", {
@@ -125,67 +169,17 @@ export function createDevVoiceProvider(): VoiceProvider {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ text }),
         });
-        if (res.ok) {
-          arrayBuffer = await res.arrayBuffer();
-        } else {
-          console.warn("ElevenLabs TTS failed:", res.status);
-        }
+        if (res.ok) arrayBuffer = await res.arrayBuffer();
+        else console.warn("ElevenLabs TTS failed:", res.status);
       } catch (e) {
         console.warn("TTS fetch failed:", e);
       }
 
-      // Play via Web Audio API (forces speaker on iOS, bypasses voice-call routing)
       if (arrayBuffer && audioCtx) {
-        return new Promise(async (resolve) => {
-          try {
-            await audioCtx!.resume();
-            const audioBuffer = await audioCtx!.decodeAudioData(arrayBuffer!);
-            const source = audioCtx!.createBufferSource();
-            source.buffer = audioBuffer;
-
-            // Route through a GainNode so we can schedule a smooth fade-out.
-            // Without this, AudioBufferSourceNode cuts the waveform mid-sample
-            // at whatever amplitude it's at, producing an audible click/pop.
-            const gain = audioCtx!.createGain();
-            source.connect(gain);
-            gain.connect(audioCtx!.destination);
-            currentSource = source;
-            currentGain = gain;
-
-            const duration = audioBuffer.duration;
-            const FADE = Math.min(0.08, duration * 0.1); // 80ms or 10% of clip
-            const now = audioCtx!.currentTime;
-            gain.gain.setValueAtTime(1, now + Math.max(0, duration - FADE));
-            gain.gain.linearRampToValueAtTime(0.0001, now + duration);
-
-            let settled = false;
-            const timeoutId = setTimeout(() => {
-              if (settled) return;
-              settled = true;
-              try { source.stop(); } catch (_) {}
-              if (currentSource === source) currentSource = null;
-              if (currentGain === gain) currentGain = null;
-              resolve();
-            }, 20000);
-
-            source.onended = () => {
-              if (settled) return;
-              settled = true;
-              clearTimeout(timeoutId);
-              if (currentSource === source) currentSource = null;
-              if (currentGain === gain) currentGain = null;
-              resolve();
-            };
-
-            source.start(0);
-          } catch (e) {
-            console.warn("Web Audio playback failed, falling back:", e);
-            resolve();
-          }
-        });
+        return playBuf(arrayBuffer);
       }
 
-      // speechSynthesis fallback (desktop or when AudioContext unavailable)
+      // speechSynthesis fallback
       return new Promise((resolve) => {
         window.speechSynthesis.cancel();
         const utter = new SpeechSynthesisUtterance(text);
@@ -208,9 +202,21 @@ export function createDevVoiceProvider(): VoiceProvider {
       });
     },
 
+    // Play pre-fetched audio buffers in order. Each promise was started in parallel
+    // (TTS fetched sentence-by-sentence as Claude streamed), played sequentially.
+    async playBufferQueue(queue: Promise<ArrayBuffer | null>[]): Promise<void> {
+      queueAborted = false;
+      for (const bufPromise of queue) {
+        if (queueAborted) return;
+        const buf = await bufPromise;
+        if (queueAborted || !buf || !audioCtx) continue;
+        await playBuf(buf);
+      }
+    },
+
     cancelSpeech() {
+      queueAborted = true;
       if (currentSource) {
-        // Quick 50ms fade before stopping to avoid a click/pop on forced cutoff
         if (currentGain && audioCtx) {
           try {
             const now = audioCtx.currentTime;

@@ -108,24 +108,26 @@ export default function CallPage() {
     }
   }
 
-  async function fetchProspectReply(currentTurns: Turn[]): Promise<string> {
-    const scen = getSession().scenario!;
-    const res = await fetch("/api/prospect", {
+  // Strip stage directions before sending to TTS
+  function cleanForTTS(text: string): string {
+    return text
+      .replace(/\*[^*\n]+\*/g, " ")
+      .replace(/\[[^\]\n]+\]/g, " ")
+      .replace(/\((?:pause|laugh|chuckle|sigh|smile|nod|beat|breath|clears?\s+(?:his|her|their|my)?\s*throat)[^)]*\)/gi, " ")
+      .replace(/\s{2,}/g, " ")
+      .trim();
+  }
+
+  // Kick off a TTS fetch immediately and return the Promise.
+  // Called per-sentence as Claude streams, so fetches run in parallel with generation.
+  function prefetchTTS(sentence: string): Promise<ArrayBuffer | null> {
+    const clean = cleanForTTS(sentence);
+    if (!clean) return Promise.resolve(null);
+    return fetch("/api/tts", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ scenario: scen, turns: currentTurns }),
-    });
-    if (!res.ok) throw new Error("Prospect API error");
-
-    const reader = res.body!.getReader();
-    const decoder = new TextDecoder();
-    let fullText = "";
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      fullText += decoder.decode(value, { stream: true });
-    }
-    return fullText.trim();
+      body: JSON.stringify({ text: clean }),
+    }).then((r) => (r.ok ? r.arrayBuffer() : null)).catch(() => null);
   }
 
   async function runProspectTurn(repText?: string) {
@@ -147,20 +149,65 @@ export default function CallPage() {
     }
 
     try {
-      const reply = await fetchProspectReply(turnsRef.current);
+      const scen = getSession().scenario!;
+      const res = await fetch("/api/prospect", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ scenario: scen, turns: turnsRef.current }),
+      });
+      if (!res.ok) throw new Error("Prospect API error");
+
+      // Stream Claude's response and split into sentences as they arrive.
+      // For each complete sentence, fire a TTS prefetch immediately (parallel to generation).
+      // This means the first sentence's audio is ready before Claude finishes writing.
+      const reader = res.body!.getReader();
+      const decoder = new TextDecoder();
+      let textBuf = "";
+      let fullText = "";
+      const ttsQueue: Promise<ArrayBuffer | null>[] = [];
+
+      function flushSentence(s: string) {
+        const trimmed = s.trim();
+        if (trimmed) ttsQueue.push(prefetchTTS(trimmed));
+      }
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) {
+          if (textBuf.trim()) flushSentence(textBuf);
+          break;
+        }
+        const chunk = decoder.decode(value, { stream: true });
+        textBuf += chunk;
+        fullText += chunk;
+
+        // Split on sentence boundaries once we have enough chars to avoid abbreviation splits.
+        // (?<=\w{4,}) ensures the "." is preceded by a real word (not "Mr.", "Dr.", etc.)
+        let m: RegExpExecArray | null;
+        while (textBuf.length > 30) {
+          m = /[!?]\s|(?<=\w{4,})\.\s/.exec(textBuf);
+          if (!m) break;
+          const end = m.index + 1;
+          flushSentence(textBuf.slice(0, end));
+          textBuf = textBuf.slice(end + 1).trimStart();
+        }
+      }
+
       if (phaseRef.current !== "live") { busyRef.current = false; return; }
 
       const prospectTurn: Turn = {
         role: "prospect",
-        text: reply,
+        text: fullText.trim(),
         startMs: Date.now(),
         endMs: 0,
       };
       turnsRef.current = [...turnsRef.current, prospectTurn];
+
       setOrbState("speaking");
-      await voiceRef.current?.speak(reply);
+      await voiceRef.current?.playBufferQueue(ttsQueue);
       prospectTurn.endMs = Date.now();
 
+      const reply = fullText;
       const endSignals = ["another meeting", "got to run", "talk later", "let's reconnect", "have to go", "i'll pass", "goodbye", "good bye", "take care"];
       if (endSignals.some((p) => reply.toLowerCase().includes(p))) {
         busyRef.current = false;

@@ -29,6 +29,11 @@
 
 * { box-sizing: border-box; }
 
+html, body {
+  overflow-x: hidden;
+  max-width: 100%;
+}
+
 body {
   background: var(--bg);
   color: var(--text);
@@ -100,6 +105,18 @@ h1, h2, h3, h4, h5, h6 {
 
 @keyframes spin {
   to { transform: rotate(360deg); }
+}
+
+/* CRM form grid: 2 columns on desktop, 1 column on mobile */
+.crm-fields {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+@media (max-width: 540px) {
+  .crm-fields {
+    grid-template-columns: 1fr;
+  }
 }
 
 @keyframes progress-fill {

@@ -349,14 +349,14 @@ export default function SetupPage() {
         {mode === "crm" && (
           <div className="card" style={{ marginBottom: 24 }}>
             <h2 style={{ margin: "0 0 16px", fontSize: 20 }}>Prospect details</h2>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 16 }}>
+            <div className="crm-fields">
               <Field label="Company" value={company} onChange={setCompany} placeholder="Müller Group GmbH" />
               <Field label="Company size" value={companySize} onChange={setCompanySize} placeholder="600–1000 employees" />
               <Field label="Location" value={location} onChange={setLocation} placeholder="Frankfurt, Germany" />
               <Field label="Contact name" value={personName} onChange={setPersonName} placeholder="Thomas Bauer" />
               <Field label="Contact title" value={personTitle} onChange={setPersonTitle} placeholder="Head of Finance" />
             </div>
-            <div style={{ display: "flex", gap: 16, marginTop: 20 }}>
+            <div style={{ display: "flex", gap: 16, marginTop: 20, flexWrap: "wrap" }}>
               <SelectField label="Call type" value={callType} onChange={(v) => setCallType(v as CallType)} options={CALL_TYPES} />
               <SelectField label="Difficulty" value={difficulty} onChange={(v) => setDifficulty(v as Difficulty)} options={DIFFICULTIES} />
             </div>
@@ -419,7 +419,7 @@ function Field({ label, value, onChange, placeholder }: {
   label: string; value: string; onChange: (v: string) => void; placeholder?: string;
 }) {
   return (
-    <label style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+    <label style={{ display: "flex", flexDirection: "column", gap: 6, minWidth: 0 }}>
       <span style={{ fontSize: 12, fontWeight: 600, color: "var(--text-weak)", textTransform: "uppercase", letterSpacing: "0.06em" }}>
         {label}
       </span>
@@ -427,7 +427,7 @@ function Field({ label, value, onChange, placeholder }: {
         value={value}
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
-        style={{ width: "100%", padding: "10px 12px", borderRadius: 8, border: "1.5px solid var(--border)", fontSize: 14, fontFamily: "'Inter', sans-serif", color: "var(--text)", background: "var(--bg)", outline: "none" }}
+        style={{ width: "100%", minWidth: 0, padding: "10px 12px", borderRadius: 8, border: "1.5px solid var(--border)", fontSize: 14, fontFamily: "'Inter', sans-serif", color: "var(--text)", background: "var(--bg)", outline: "none" }}
       />
     </label>
   );

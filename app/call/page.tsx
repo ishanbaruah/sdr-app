@@ -142,13 +142,11 @@ export default function CallPage() {
         startMs: Date.now(),
         endMs: 0,
       };
-      // Save turn before speaking so it's preserved even if speechSynthesis hangs on iOS
       turnsRef.current = [...turnsRef.current, prospectTurn];
       setOrbState("speaking");
       await voiceRef.current?.speak(reply);
       prospectTurn.endMs = Date.now();
 
-      // Check if prospect is ending the call naturally
       const endSignals = ["another meeting", "got to run", "talk later", "let's reconnect", "have to go", "i'll pass", "goodbye", "good bye", "take care"];
       if (endSignals.some((p) => reply.toLowerCase().includes(p))) {
         busyRef.current = false;

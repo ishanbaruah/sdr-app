@@ -3,6 +3,7 @@
 import type { VoiceProvider } from "./types";
 
 export function createDevVoiceProvider(): VoiceProvider {
+  let SpeechRecognitionCtor: any = null;
   let recognition: SpeechRecognition | null = null;
   let silenceTimer: ReturnType<typeof setTimeout> | null = null;
   let isRunning = false;
@@ -10,58 +11,78 @@ export function createDevVoiceProvider(): VoiceProvider {
   let currentAudio: HTMLAudioElement | null = null;
   const SILENCE_MS = 1400;
 
+  // Spawns a fresh recognition instance with all handlers wired up.
+  // Called on first start and on every restart (iOS needs a fresh instance
+  // after onend fires — restarting the same instance is unreliable on Safari).
+  function spawnRecognition(
+    onFinal: (text: string) => void,
+    onInterim?: (text: string) => void,
+  ): SpeechRecognition {
+    const r = new SpeechRecognitionCtor() as SpeechRecognition;
+    r.continuous = true;
+    r.interimResults = true;
+    r.lang = "en-US";
+
+    r.onstart = () => { isRunning = true; };
+
+    r.onend = () => {
+      isRunning = false;
+      if (pendingStart) {
+        pendingStart = false;
+        // Always spawn fresh — reusing the stopped instance fails on iOS
+        recognition = spawnRecognition(onFinal, onInterim);
+        try { recognition.start(); } catch (_) {}
+      }
+    };
+
+    r.onresult = (e: SpeechRecognitionEvent) => {
+      if (silenceTimer) { clearTimeout(silenceTimer); silenceTimer = null; }
+      let interim = "";
+      let finalText = "";
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        if (e.results[i].isFinal) {
+          finalText += e.results[i][0].transcript;
+        } else {
+          interim += e.results[i][0].transcript;
+        }
+      }
+      if (interim && onInterim) onInterim(interim);
+      if (finalText.trim()) {
+        silenceTimer = setTimeout(() => onFinal(finalText.trim()), SILENCE_MS);
+      }
+    };
+
+    r.onerror = (e: SpeechRecognitionErrorEvent) => {
+      if (e.error === "aborted" || e.error === "no-speech") return;
+      console.warn("SpeechRecognition error:", e.error);
+    };
+
+    return r;
+  }
+
   return {
     transcribe(onFinal, onInterim) {
-      const SpeechRecognitionCtor =
+      SpeechRecognitionCtor =
         (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-      if (!SpeechRecognitionCtor) throw new Error("SpeechRecognition not supported in this browser. Please use Chrome.");
+      if (!SpeechRecognitionCtor)
+        throw new Error("SpeechRecognition not supported in this browser. Please use Chrome.");
 
-      recognition = new SpeechRecognitionCtor() as SpeechRecognition;
-      recognition.continuous = true;
-      recognition.interimResults = true;
-      recognition.lang = "en-US";
-
-      recognition.onstart = () => { isRunning = true; };
-
-      // When recognition stops (naturally or via .stop()), honour any pending restart
-      recognition.onend = () => {
-        isRunning = false;
-        if (pendingStart) {
-          pendingStart = false;
-          try { recognition?.start(); } catch (_) {}
-        }
-      };
-
-      recognition.onresult = (e: SpeechRecognitionEvent) => {
-        if (silenceTimer) { clearTimeout(silenceTimer); silenceTimer = null; }
-        let interim = "";
-        let finalText = "";
-        for (let i = e.resultIndex; i < e.results.length; i++) {
-          if (e.results[i].isFinal) {
-            finalText += e.results[i][0].transcript;
-          } else {
-            interim += e.results[i][0].transcript;
-          }
-        }
-        if (interim && onInterim) onInterim(interim);
-        if (finalText.trim()) {
-          silenceTimer = setTimeout(() => onFinal(finalText.trim()), SILENCE_MS);
-        }
-      };
-
-      recognition.onerror = (e: SpeechRecognitionErrorEvent) => {
-        if (e.error === "aborted" || e.error === "no-speech") return;
-        console.warn("SpeechRecognition error:", e.error);
-      };
+      recognition = spawnRecognition(onFinal, onInterim);
 
       return {
         start() {
+          if (isRunning) {
+            // Recognition is still winding down — schedule restart for onend
+            pendingStart = true;
+            return;
+          }
           pendingStart = false;
-          if (isRunning) return;
+          // Spawn fresh instance every time for iOS reliability
+          recognition = spawnRecognition(onFinal, onInterim);
           try {
-            recognition?.start();
+            recognition.start();
           } catch (_) {
-            // Recognition still shutting down — schedule restart on onend
+            // Still shutting down — fall back to pending mechanism
             pendingStart = true;
           }
         },
@@ -104,11 +125,20 @@ export function createDevVoiceProvider(): VoiceProvider {
         return new Promise((resolve) => {
           const audio = new Audio(blobUrl!);
           currentAudio = audio;
+
+          let settled = false;
+          // Always resolve within 20s — iOS can swallow onended events
+          const timeoutId = setTimeout(() => settle(), 20000);
+
           const settle = () => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timeoutId);
             if (blobUrl) { URL.revokeObjectURL(blobUrl); blobUrl = null; }
             if (currentAudio === audio) currentAudio = null;
             resolve();
           };
+
           audio.onended = settle;
           audio.onerror = settle;
           audio.play().catch(settle);

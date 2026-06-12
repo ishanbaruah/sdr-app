@@ -101,7 +101,16 @@ export function createDevVoiceProvider(): VoiceProvider {
       };
     },
 
-    async speak(text: string): Promise<void> {
+    async speak(rawText: string): Promise<void> {
+      // Strip stage directions Claude occasionally generates despite prompt instructions:
+      // *sighs*, [beat], (pause), (laughs), etc.
+      const text = rawText
+        .replace(/\*[^*\n]+\*/g, " ")          // *action*
+        .replace(/\[[^\]\n]+\]/g, " ")          // [action]
+        .replace(/\((?:pause|laugh|chuckle|sigh|smile|nod|beat|breath|clears?\s+(?:his|her|their|my)?\s*throat)[^)]*\)/gi, " ")
+        .replace(/\s{2,}/g, " ")
+        .trim();
+
       // Cancel any in-progress audio
       if (currentSource) {
         try { currentSource.stop(); } catch (_) {}

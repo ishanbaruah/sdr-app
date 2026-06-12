@@ -188,9 +188,8 @@ export default function CallPage() {
       return;
     }
 
-    // Unlock both HTML audio and speechSynthesis for iOS — must run synchronously within the gesture.
-    const unlockAudio = new Audio("data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA");
-    unlockAudio.play().catch(() => {});
+    // Unlock speechSynthesis for iOS fallback path — must run synchronously in gesture.
+    // Web Audio (primary path) is unlocked inside voiceRef.current.transcribe() below.
     window.speechSynthesis.cancel();
     window.speechSynthesis.speak(new SpeechSynthesisUtterance(""));
 

@@ -8,12 +8,14 @@ export function createDevVoiceProvider(): VoiceProvider {
   let silenceTimer: ReturnType<typeof setTimeout> | null = null;
   let isRunning = false;
   let pendingStart = false;
-  let currentAudio: HTMLAudioElement | null = null;
+
+  // Web Audio API for playback — on iOS, AudioContext uses AVAudioSessionCategoryPlayback
+  // (speaker) even when SpeechRecognition has the mic in "voice" mode.
+  let audioCtx: AudioContext | null = null;
+  let currentSource: AudioBufferSourceNode | null = null;
+
   const SILENCE_MS = 1400;
 
-  // Spawns a fresh recognition instance with all handlers wired up.
-  // Called on first start and on every restart (iOS needs a fresh instance
-  // after onend fires — restarting the same instance is unreliable on Safari).
   function spawnRecognition(
     onFinal: (text: string) => void,
     onInterim?: (text: string) => void,
@@ -29,7 +31,6 @@ export function createDevVoiceProvider(): VoiceProvider {
       isRunning = false;
       if (pendingStart) {
         pendingStart = false;
-        // Always spawn fresh — reusing the stopped instance fails on iOS
         recognition = spawnRecognition(onFinal, onInterim);
         try { recognition.start(); } catch (_) {}
       }
@@ -65,24 +66,27 @@ export function createDevVoiceProvider(): VoiceProvider {
       SpeechRecognitionCtor =
         (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
       if (!SpeechRecognitionCtor)
-        throw new Error("SpeechRecognition not supported in this browser. Please use Chrome.");
+        throw new Error("SpeechRecognition not supported. Please use Chrome.");
 
       recognition = spawnRecognition(onFinal, onInterim);
+
+      // Create + resume AudioContext synchronously inside the user-gesture handler.
+      // This unlocks Web Audio on iOS — all subsequent source.start() calls will
+      // play through the speaker regardless of SpeechRecognition audio session state.
+      if (!audioCtx) audioCtx = new AudioContext();
+      audioCtx.resume().catch(() => {});
 
       return {
         start() {
           if (isRunning) {
-            // Recognition is still winding down — schedule restart for onend
             pendingStart = true;
             return;
           }
           pendingStart = false;
-          // Spawn fresh instance every time for iOS reliability
           recognition = spawnRecognition(onFinal, onInterim);
           try {
             recognition.start();
           } catch (_) {
-            // Still shutting down — fall back to pending mechanism
             pendingStart = true;
           }
         },
@@ -97,14 +101,14 @@ export function createDevVoiceProvider(): VoiceProvider {
     },
 
     async speak(text: string): Promise<void> {
-      if (currentAudio) {
-        currentAudio.pause();
-        currentAudio.src = "";
-        currentAudio = null;
+      // Cancel any in-progress audio
+      if (currentSource) {
+        try { currentSource.stop(); } catch (_) {}
+        currentSource = null;
       }
 
-      // Try ElevenLabs first; fall back to speechSynthesis if it fails
-      let blobUrl: string | null = null;
+      // Fetch ElevenLabs audio as raw bytes
+      let arrayBuffer: ArrayBuffer | null = null;
       try {
         const res = await fetch("/api/tts", {
           method: "POST",
@@ -112,40 +116,51 @@ export function createDevVoiceProvider(): VoiceProvider {
           body: JSON.stringify({ text }),
         });
         if (res.ok) {
-          const blob = await res.blob();
-          blobUrl = URL.createObjectURL(blob);
+          arrayBuffer = await res.arrayBuffer();
         } else {
-          console.warn("ElevenLabs TTS failed, falling back to speechSynthesis:", res.status);
+          console.warn("ElevenLabs TTS failed:", res.status);
         }
       } catch (e) {
-        console.warn("ElevenLabs TTS fetch failed, falling back to speechSynthesis:", e);
+        console.warn("TTS fetch failed:", e);
       }
 
-      if (blobUrl) {
-        return new Promise((resolve) => {
-          const audio = new Audio(blobUrl!);
-          currentAudio = audio;
+      // Play via Web Audio API (forces speaker on iOS, bypasses voice-call routing)
+      if (arrayBuffer && audioCtx) {
+        return new Promise(async (resolve) => {
+          try {
+            await audioCtx!.resume();
+            const audioBuffer = await audioCtx!.decodeAudioData(arrayBuffer!);
+            const source = audioCtx!.createBufferSource();
+            source.buffer = audioBuffer;
+            source.connect(audioCtx!.destination);
+            currentSource = source;
 
-          let settled = false;
-          // Always resolve within 20s — iOS can swallow onended events
-          const timeoutId = setTimeout(() => settle(), 20000);
+            let settled = false;
+            const timeoutId = setTimeout(() => {
+              if (settled) return;
+              settled = true;
+              try { source.stop(); } catch (_) {}
+              if (currentSource === source) currentSource = null;
+              resolve();
+            }, 20000);
 
-          const settle = () => {
-            if (settled) return;
-            settled = true;
-            clearTimeout(timeoutId);
-            if (blobUrl) { URL.revokeObjectURL(blobUrl); blobUrl = null; }
-            if (currentAudio === audio) currentAudio = null;
+            source.onended = () => {
+              if (settled) return;
+              settled = true;
+              clearTimeout(timeoutId);
+              if (currentSource === source) currentSource = null;
+              resolve();
+            };
+
+            source.start(0);
+          } catch (e) {
+            console.warn("Web Audio playback failed, falling back:", e);
             resolve();
-          };
-
-          audio.onended = settle;
-          audio.onerror = settle;
-          audio.play().catch(settle);
+          }
         });
       }
 
-      // speechSynthesis fallback
+      // speechSynthesis fallback (desktop or when AudioContext unavailable)
       return new Promise((resolve) => {
         window.speechSynthesis.cancel();
         const utter = new SpeechSynthesisUtterance(text);
@@ -169,10 +184,9 @@ export function createDevVoiceProvider(): VoiceProvider {
     },
 
     cancelSpeech() {
-      if (currentAudio) {
-        currentAudio.pause();
-        currentAudio.src = "";
-        currentAudio = null;
+      if (currentSource) {
+        try { currentSource.stop(); } catch (_) {}
+        currentSource = null;
       }
     },
   };

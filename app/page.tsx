@@ -427,7 +427,7 @@ function Field({ label, value, onChange, placeholder }: {
         value={value}
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
-        style={{ padding: "10px 12px", borderRadius: 8, border: "1.5px solid var(--border)", fontSize: 14, fontFamily: "'Inter', sans-serif", color: "var(--text)", background: "var(--bg)", outline: "none" }}
+        style={{ width: "100%", padding: "10px 12px", borderRadius: 8, border: "1.5px solid var(--border)", fontSize: 14, fontFamily: "'Inter', sans-serif", color: "var(--text)", background: "var(--bg)", outline: "none" }}
       />
     </label>
   );
@@ -444,7 +444,7 @@ function SelectField({ label, value, onChange, options }: {
       <select
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        style={{ padding: "10px 12px", borderRadius: 8, border: "1.5px solid var(--border)", fontSize: 14, fontFamily: "'Inter', sans-serif", color: "var(--text)", background: "var(--bg)", outline: "none", cursor: "pointer" }}
+        style={{ width: "100%", padding: "10px 12px", borderRadius: 8, border: "1.5px solid var(--border)", fontSize: 14, fontFamily: "'Inter', sans-serif", color: "var(--text)", background: "var(--bg)", outline: "none", cursor: "pointer" }}
       >
         {options.map((o) => (
           <option key={o} value={o}>{o.charAt(0).toUpperCase() + o.slice(1)}</option>

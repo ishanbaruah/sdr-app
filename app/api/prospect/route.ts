@@ -17,12 +17,19 @@ export async function POST(req: NextRequest) {
   //   2. First message must be role "user"
   // We always prepend a synthetic user message so the conversation starts correctly,
   // whether turns is empty (opening) or starts with a prospect/assistant turn.
+  const openingPrompts: Record<string, string> = {
+    cold: "(Your phone rings — unexpected. You pick up mid-task. Answer as yourself, natural and slightly caught off-guard. Be real, not robotic.)",
+    discovery: "(Your scheduled call is starting. Pick up and open the conversation — acknowledge the meeting, briefly set context from your side, maybe mention a constraint or what you were just doing. Be genuine, not a press release.)",
+    demo: "(Scheduled demo call starting. You pick up. Open by acknowledging it, maybe signal what you're most skeptical about or what you actually need to see. You've been in too many generic demos.)",
+    negotiation: "(Negotiation call starting. Pick up and open direct — you both know why you're here. Set your tone.)",
+  };
+
   const messages: Anthropic.MessageParam[] = [
     {
       role: "user",
       content: turns.length === 0
-        ? "(The phone rings. You pick up and start the call.)"
-        : "(Conversation so far shown above. Continue as the prospect.)",
+        ? (openingPrompts[scenario.callType] ?? "(Your phone rings. Pick up and start the call naturally.)")
+        : "(Continue the conversation as yourself. Natural, real — the way you'd actually talk on a call.)",
     },
   ];
 

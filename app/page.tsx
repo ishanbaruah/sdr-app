@@ -349,7 +349,7 @@ export default function SetupPage() {
         {mode === "crm" && (
           <div className="card" style={{ marginBottom: 24 }}>
             <h2 style={{ margin: "0 0 16px", fontSize: 20 }}>Prospect details</h2>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 16 }}>
               <Field label="Company" value={company} onChange={setCompany} placeholder="Müller Group GmbH" />
               <Field label="Company size" value={companySize} onChange={setCompanySize} placeholder="600–1000 employees" />
               <Field label="Location" value={location} onChange={setLocation} placeholder="Frankfurt, Germany" />

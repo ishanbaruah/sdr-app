@@ -184,13 +184,32 @@ export default function SetupPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
-      // Scenario route always returns 200 (streams headers immediately for iOS).
-      // Error is signalled via { error: string } in the body.
-      const data = await res.json().catch(() => ({ error: "Invalid response" }));
-      if (!res.ok || (data as any).error) {
-        throw new Error((data as any).error || "Something went wrong");
+      if (!res.ok) throw new Error("Server error");
+
+      // Route returns SSE (text/event-stream) — read stream until we get a data: line.
+      // This keeps the connection alive through Vercel/Cloudflare without buffering.
+      const reader = res.body!.getReader();
+      const decoder = new TextDecoder();
+      let buf = "";
+      let result: any = null;
+      outer: while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        const blocks = buf.split("\n\n");
+        buf = blocks.pop() ?? "";
+        for (const block of blocks) {
+          for (const line of block.split("\n")) {
+            if (line.startsWith("data: ")) {
+              try { result = JSON.parse(line.slice(6)); } catch (_) {}
+              break outer;
+            }
+          }
+        }
       }
-      setScenario(data);
+      if (!result) throw new Error("No response received");
+      if (result.error) throw new Error(result.error);
+      setScenario(result);
     } catch (e: any) {
       setError(e.message || "Something went wrong");
     } finally {

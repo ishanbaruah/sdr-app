@@ -47,7 +47,6 @@ async function generateScenario(userPrompt: string): Promise<Scenario> {
   return JSON.parse(extracted) as Scenario;
 }
 
-// Build prompt from request body, return null for invalid requests
 function buildPrompt(body: any): string | null {
   if (body.mode === "transcript") {
     return `A LucaNet sales rep pasted this call transcript or prospect profile. Extract the prospect's persona, deal context, mood, likely objections, and define a clear call objective for the rep to practice.\n\nTranscript/Profile:\n${body.transcript}\n\nCallType: ${body.callType ?? "discovery"}, Difficulty: ${body.difficulty ?? "realistic"}`;
@@ -76,29 +75,30 @@ export async function POST(req: NextRequest) {
 
   const encoder = new TextEncoder();
 
-  // Stream the response so the browser receives HTTP 200 + headers immediately.
-  // iOS Safari shows "this page could not load" when a request takes 12-15s with
-  // no response at all — keep-alive pings (whitespace) prevent that timeout.
-  // JSON.parse() ignores leading whitespace so the client needs no changes.
+  // Use SSE (text/event-stream) so Vercel/Cloudflare never buffer the stream.
+  // A plain JSON stream with small whitespace pings gets buffered by Cloudflare
+  // until it reaches ~4 KB — iOS Safari sees no response for 12-15s and shows
+  // "This page couldn't load". SSE + large initial comment busts the buffer immediately.
   const readable = new ReadableStream({
     async start(controller) {
-      // Flush headers immediately
-      controller.enqueue(encoder.encode(" "));
+      // SSE comment + 4 KB padding forces CDN/proxy to flush headers + first bytes immediately
+      const pad = ": " + " ".repeat(4096) + "\n\n";
+      controller.enqueue(encoder.encode(pad));
 
-      // Ping every 3s to keep the mobile connection alive
+      // Keep-alive pings every 2 seconds while Claude generates
       const ping = setInterval(() => {
-        try { controller.enqueue(encoder.encode(" ")); } catch (_) {}
-      }, 3000);
+        try { controller.enqueue(encoder.encode(": ping\n\n")); } catch (_) {}
+      }, 2000);
 
       try {
         const scenario = await generateScenario(prompt);
         clearInterval(ping);
-        controller.enqueue(encoder.encode(JSON.stringify(scenario)));
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify(scenario)}\n\n`));
       } catch (e: any) {
         clearInterval(ping);
         console.error("Scenario error:", e);
         controller.enqueue(
-          encoder.encode(JSON.stringify({ error: "Failed to generate scenario. Please try again." }))
+          encoder.encode(`data: ${JSON.stringify({ error: "Failed to generate scenario. Please try again." })}\n\n`)
         );
       }
 
@@ -108,9 +108,10 @@ export async function POST(req: NextRequest) {
 
   return new Response(readable, {
     headers: {
-      "Content-Type": "application/json",
-      "Cache-Control": "no-store",
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache, no-transform",
       "X-Accel-Buffering": "no",
+      "Connection": "keep-alive",
     },
   });
 }

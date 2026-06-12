@@ -542,9 +542,6 @@ function ScenarioLoader({ mode }: { mode: Mode }) {
         }} />
       </div>
 
-      <p style={{ margin: "12px 0 0", fontSize: 12, color: "var(--text-weak)" }}>
-        Claude is building your prospect — usually takes 10–20 seconds
-      </p>
     </div>
   );
 }

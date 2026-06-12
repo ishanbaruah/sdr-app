@@ -94,6 +94,20 @@ export default function CallPage() {
     }
   }
 
+  async function requestMicOnly() {
+    setPermError("");
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      setCamStream(stream);
+    } catch (e: any) {
+      setPermError(
+        e.name === "NotAllowedError"
+          ? "Microphone access was denied. Allow access in your browser settings and try again."
+          : "Could not access microphone: " + e.message
+      );
+    }
+  }
+
   async function fetchProspectReply(currentTurns: Turn[]): Promise<string> {
     const scen = getSession().scenario!;
     const res = await fetch("/api/prospect", {
@@ -179,6 +193,7 @@ export default function CallPage() {
 
   function startLiveCall() {
     if (!camStream || !scenario) return;
+    const hasCam = camStream.getVideoTracks().length > 0;
 
     const hasSpeech = !!(
       (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
@@ -254,16 +269,35 @@ export default function CallPage() {
               <button className="btn-primary" onClick={requestDevices} style={{ width: "100%", padding: "14px 0" }}>
                 Allow camera &amp; microphone
               </button>
+              <button
+                onClick={requestMicOnly}
+                style={{
+                  width: "100%", padding: "12px 0", marginTop: 12,
+                  background: "transparent", border: "1px solid var(--border)",
+                  borderRadius: 10, cursor: "pointer",
+                  color: "var(--text-weak)", fontSize: 14,
+                  fontFamily: "'Figtree', sans-serif",
+                }}
+              >
+                Continue without camera (mic only)
+              </button>
             </div>
           ) : (
             <div>
-              <div style={{ borderRadius: 12, overflow: "hidden", background: "#111", aspectRatio: "16/9", marginBottom: 20 }}>
-                <video
-                  ref={previewVideoRef}
-                  autoPlay muted playsInline
-                  style={{ width: "100%", height: "100%", objectFit: "cover", transform: "scaleX(-1)", display: "block" }}
-                />
-              </div>
+              {camStream.getVideoTracks().length > 0 ? (
+                <div style={{ borderRadius: 12, overflow: "hidden", background: "#111", aspectRatio: "16/9", marginBottom: 20 }}>
+                  <video
+                    ref={previewVideoRef}
+                    autoPlay muted playsInline
+                    style={{ width: "100%", height: "100%", objectFit: "cover", transform: "scaleX(-1)", display: "block" }}
+                  />
+                </div>
+              ) : (
+                <div style={{ borderRadius: 12, background: "#111", aspectRatio: "16/9", marginBottom: 20, display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: 8 }}>
+                  <span style={{ fontSize: 32 }}>📵</span>
+                  <span style={{ fontSize: 13, color: "var(--text-weak)" }}>No camera</span>
+                </div>
+              )}
 
               <div style={{ marginBottom: 20 }}>
                 <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text-weak)", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8 }}>
@@ -274,7 +308,7 @@ export default function CallPage() {
                 </div>
                 {micLevel < 5 && (
                   <p style={{ fontSize: 12, color: "var(--warn)", marginTop: 6 }}>
-                    Speak into your mic — we're not picking up much signal yet.
+                    Speak into your mic — we&apos;re not picking up much signal yet.
                   </p>
                 )}
               </div>
@@ -285,7 +319,7 @@ export default function CallPage() {
                 </div>
               ) : (
                 <div style={{ background: "var(--good-bg)", color: "var(--good)", borderRadius: 10, padding: "10px 14px", fontSize: 14, marginBottom: 20 }}>
-                  ✓ Camera and mic ready
+                  {camStream.getVideoTracks().length > 0 ? "✓ Camera and mic ready" : "✓ Mic ready"}
                 </div>
               )}
 

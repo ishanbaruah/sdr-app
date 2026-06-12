@@ -7,12 +7,15 @@ interface Props {
 
 export default function SelfView({ stream }: Props) {
   const videoRef = useRef<HTMLVideoElement>(null);
+  const hasCam = !!(stream && stream.getVideoTracks().length > 0);
 
   useEffect(() => {
-    if (videoRef.current && stream) {
+    if (videoRef.current && stream && hasCam) {
       videoRef.current.srcObject = stream;
     }
-  }, [stream]);
+  }, [stream, hasCam]);
+
+  if (!hasCam) return null;
 
   return (
     <div

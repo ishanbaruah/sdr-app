@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
 import type { Scenario, CRMFields } from "@/lib/scenario";
 
+export const maxDuration = 60;
+
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
 const SCENARIO_SCHEMA = `Return ONLY a valid JSON object — no prose, no markdown fences, no comments:
@@ -24,15 +26,25 @@ function extractJson(text: string): string {
 }
 
 async function generateScenario(userPrompt: string): Promise<Scenario> {
-  const msg = await client.messages.create({
+  let raw = "";
+  const stream = client.messages.stream({
     model: "claude-sonnet-4-6",
     max_tokens: 1024,
     system: "You generate realistic B2B sales call scenarios for LucaNet sales training. LucaNet sells financial consolidation, planning (xP&A), ESG reporting, and tax compliance software. Output only the JSON object — no explanation, no markdown.",
     messages: [{ role: "user", content: `${userPrompt}\n\n${SCENARIO_SCHEMA}` }],
   });
+  for await (const chunk of stream) {
+    if (chunk.type === "content_block_delta" && chunk.delta.type === "text_delta") {
+      raw += chunk.delta.text;
+    }
+  }
 
-  const raw = msg.content[0].type === "text" ? msg.content[0].text : "";
-  return JSON.parse(extractJson(raw)) as Scenario;
+  const extracted = extractJson(raw);
+  if (!extracted.startsWith("{")) {
+    console.error("Scenario: unexpected model output:", raw.slice(0, 200));
+    throw new Error("Model returned unexpected output");
+  }
+  return JSON.parse(extracted) as Scenario;
 }
 
 export async function POST(req: NextRequest) {

@@ -489,9 +489,9 @@ function ScenarioPreview({ scenario, onRegenerate, onStart, loading }: {
 }
 
 const LOADER_STEPS: Record<Mode, string[]> = {
-  sample:     ["Reading transcript…", "Extracting prospect persona…", "Building objections…", "Almost ready…"],
-  transcript: ["Parsing your transcript…", "Identifying prospect persona…", "Building objections…", "Almost ready…"],
-  crm:        ["Looking up company profile…", "Crafting prospect persona…", "Building objections…", "Almost ready…"],
+  sample:     ["Reading transcript…", "Extracting prospect persona…", "Crafting their objections…", "Setting the scene…", "Almost ready…"],
+  transcript: ["Parsing your transcript…", "Identifying prospect persona…", "Crafting their objections…", "Setting the scene…", "Almost ready…"],
+  crm:        ["Looking up company profile…", "Crafting prospect persona…", "Building objections…", "Setting the scene…", "Almost ready…"],
 };
 
 function ScenarioLoader({ mode }: { mode: Mode }) {
@@ -501,7 +501,7 @@ function ScenarioLoader({ mode }: { mode: Mode }) {
   useEffect(() => {
     const id = setInterval(() => {
       setStepIdx((i) => Math.min(i + 1, steps.length - 1));
-    }, 2200);
+    }, 3800);
     return () => clearInterval(id);
   }, [steps.length]);
 
@@ -538,12 +538,12 @@ function ScenarioLoader({ mode }: { mode: Mode }) {
         <div style={{
           height: "100%", borderRadius: 99,
           background: "linear-gradient(90deg, var(--grad-from), var(--grad-to))",
-          animation: "progress-fill 9s cubic-bezier(0.1, 0.4, 0.6, 1) forwards",
+          animation: "progress-fill 22s cubic-bezier(0.1, 0.4, 0.6, 1) forwards",
         }} />
       </div>
 
       <p style={{ margin: "12px 0 0", fontSize: 12, color: "var(--text-weak)" }}>
-        Claude is building your prospect — usually takes 5–10 seconds
+        Claude is building your prospect — usually takes 10–20 seconds
       </p>
     </div>
   );

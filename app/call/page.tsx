@@ -190,10 +190,11 @@ export default function CallPage() {
       return;
     }
 
-    // Unlock HTML audio for iOS — must be called synchronously within the user-gesture handler.
-    // iOS blocks audio.play() when called from async code (e.g. after a fetch).
+    // Unlock both HTML audio and speechSynthesis for iOS — must run synchronously within the gesture.
     const unlockAudio = new Audio("data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA");
     unlockAudio.play().catch(() => {});
+    window.speechSynthesis.cancel();
+    window.speechSynthesis.speak(new SpeechSynthesisUtterance(""));
 
     // Stop the getUserMedia audio track — SpeechRecognition manages mic access on its own.
     // Keeping an active audio track open causes iOS to route all TTS output through the earpiece.

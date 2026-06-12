@@ -3,6 +3,8 @@ import Anthropic from "@anthropic-ai/sdk";
 import type { Scenario, Turn } from "@/lib/scenario";
 import { blendReport } from "@/lib/scoring";
 
+export const maxDuration = 60;
+
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
 const SCORE_SYSTEM = `You are a senior LucaNet sales coach evaluating a recorded sales call. LucaNet sells financial consolidation, planning (xP&A), ESG reporting, and tax compliance software to mid-market and enterprise finance teams. Key value props: faster close cycles, single source of truth, no IT dependency, 8–12 week implementation, full audit trail.
@@ -59,15 +61,25 @@ TRANSCRIPT:
 ${transcript}`;
 
   try {
-    const msg = await client.messages.create({
+    let raw = "";
+    const stream = client.messages.stream({
       model: "claude-sonnet-4-6",
       max_tokens: 2048,
       system: SCORE_SYSTEM,
       messages: [{ role: "user", content: userPrompt }],
     });
+    for await (const chunk of stream) {
+      if (chunk.type === "content_block_delta" && chunk.delta.type === "text_delta") {
+        raw += chunk.delta.text;
+      }
+    }
 
-    const raw = msg.content[0].type === "text" ? msg.content[0].text : "";
-    const rubricData = JSON.parse(extractJson(raw));
+    const extracted = extractJson(raw);
+    if (!extracted.startsWith("{")) {
+      console.error("Scoring: unexpected Claude response:", raw.slice(0, 300));
+      return NextResponse.json({ error: "Scoring model returned unexpected output." }, { status: 500 });
+    }
+    const rubricData = JSON.parse(extracted);
     const report = blendReport(turns, rubricData);
     return NextResponse.json(report);
   } catch (e: any) {

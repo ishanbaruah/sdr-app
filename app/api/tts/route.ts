@@ -30,6 +30,7 @@ export async function POST(req: NextRequest) {
 
   if (!upstream.ok) {
     const detail = await upstream.text();
+    console.error(`ElevenLabs ${upstream.status}:`, detail);
     return new Response(JSON.stringify({ error: `ElevenLabs error: ${detail}` }), { status: 502 });
   }
 

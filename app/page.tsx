@@ -184,11 +184,13 @@ export default function SetupPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
+      // Scenario route always returns 200 (streams headers immediately for iOS).
+      // Error is signalled via { error: string } in the body.
+      const data = await res.json().catch(() => ({ error: "Invalid response" }));
+      if (!res.ok || (data as any).error) {
         throw new Error((data as any).error || "Something went wrong");
       }
-      setScenario(await res.json());
+      setScenario(data);
     } catch (e: any) {
       setError(e.message || "Something went wrong");
     } finally {

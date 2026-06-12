@@ -13,6 +13,7 @@ export function createDevVoiceProvider(): VoiceProvider {
   // (speaker) even when SpeechRecognition has the mic in "voice" mode.
   let audioCtx: AudioContext | null = null;
   let currentSource: AudioBufferSourceNode | null = null;
+  let currentGain: GainNode | null = null;
 
   const SILENCE_MS = 1400;
 
@@ -132,8 +133,21 @@ export function createDevVoiceProvider(): VoiceProvider {
             const audioBuffer = await audioCtx!.decodeAudioData(arrayBuffer!);
             const source = audioCtx!.createBufferSource();
             source.buffer = audioBuffer;
-            source.connect(audioCtx!.destination);
+
+            // Route through a GainNode so we can schedule a smooth fade-out.
+            // Without this, AudioBufferSourceNode cuts the waveform mid-sample
+            // at whatever amplitude it's at, producing an audible click/pop.
+            const gain = audioCtx!.createGain();
+            source.connect(gain);
+            gain.connect(audioCtx!.destination);
             currentSource = source;
+            currentGain = gain;
+
+            const duration = audioBuffer.duration;
+            const FADE = Math.min(0.08, duration * 0.1); // 80ms or 10% of clip
+            const now = audioCtx!.currentTime;
+            gain.gain.setValueAtTime(1, now + Math.max(0, duration - FADE));
+            gain.gain.linearRampToValueAtTime(0.0001, now + duration);
 
             let settled = false;
             const timeoutId = setTimeout(() => {
@@ -141,6 +155,7 @@ export function createDevVoiceProvider(): VoiceProvider {
               settled = true;
               try { source.stop(); } catch (_) {}
               if (currentSource === source) currentSource = null;
+              if (currentGain === gain) currentGain = null;
               resolve();
             }, 20000);
 
@@ -149,6 +164,7 @@ export function createDevVoiceProvider(): VoiceProvider {
               settled = true;
               clearTimeout(timeoutId);
               if (currentSource === source) currentSource = null;
+              if (currentGain === gain) currentGain = null;
               resolve();
             };
 
@@ -185,8 +201,19 @@ export function createDevVoiceProvider(): VoiceProvider {
 
     cancelSpeech() {
       if (currentSource) {
-        try { currentSource.stop(); } catch (_) {}
+        // Quick 50ms fade before stopping to avoid a click/pop on forced cutoff
+        if (currentGain && audioCtx) {
+          try {
+            const now = audioCtx.currentTime;
+            currentGain.gain.cancelScheduledValues(now);
+            currentGain.gain.setValueAtTime(currentGain.gain.value, now);
+            currentGain.gain.linearRampToValueAtTime(0.0001, now + 0.05);
+          } catch (_) {}
+        }
+        const src = currentSource;
         currentSource = null;
+        currentGain = null;
+        try { src.stop(audioCtx ? audioCtx.currentTime + 0.05 : undefined); } catch (_) {}
       }
     },
   };
